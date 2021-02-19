@@ -1,35 +1,41 @@
 #include "types.h"
 #include "checkers.h"
+#include "renderer.h"
+#include "image.h"
 
 #include <stdexcept>
 
-void init_optix()
-{
-    cudaFree(nullptr);
-    int numDevices;
-    cudaGetDeviceCount(&numDevices);
+using color_t = uchar4;
 
-    if (numDevices == 0)
-    {
-        throw std::runtime_error("No CUDA capable devices found!");
-    }
+constexpr unsigned int IMAGE_WIDTH = 1024;
+constexpr unsigned int IMAGE_HEIGHT = 728;
+constexpr unsigned int BUFFER_SIZE = IMAGE_WIDTH * IMAGE_HEIGHT;
+constexpr unsigned int BUFFER_SIZE_IN_BYTES = sizeof(color_t) * BUFFER_SIZE;
 
-    LOG_INFO("Found %d CUDA device(s)\n", numDevices);
-    OPTIX_SAFE_CALL(optixInit());
-}
-
-int main(int ac, char** av)
+int main(int argc, char* argv[])
 {
     try
     {
-        LOG_INFO("Initializing OptiX\n");
+        render_options_t opt {};
+        opt.height = IMAGE_WIDTH;
+        opt.width = IMAGE_HEIGHT;
 
-        init_optix();
+        renderer_t renderer { opt };
 
-        LOG_INFO("Success\n");
-        LOG_INFO("Clean exit\n");
+        // Allocate device storage for image
+        device_buffer_t buffer { BUFFER_SIZE_IN_BYTES };
+        renderer.render(buffer);
 
-    } catch (std::runtime_error& e)
+        // Copy result back to host
+        std::vector<uchar4> result(BUFFER_SIZE);
+        buffer.fetch(result.data(), buffer.size());
+
+        // Save image to disk
+        write_image(result, "out.png", { IMAGE_WIDTH, IMAGE_HEIGHT} );
+
+        renderer.cleanup();
+    }
+    catch (std::exception& e)
     {
         LOG_ERROR("ERROR: %s\n", e.what());
         exit(1);
