@@ -6,5 +6,5 @@
 #include <string>
 #include <vector>
 
-#include "launch_params.h"
+#include "shader_types.h"
 #include "sbt.h"

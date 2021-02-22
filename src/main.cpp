@@ -2,7 +2,6 @@
 #include "checkers.h"
 #include "renderer.h"
 #include "image.h"
-#include "scene.h"
 
 #include <stdexcept>
 
@@ -17,12 +16,12 @@ int main(int argc, char* argv[])
     {
         // Initialize renderer
         render_options_t opt {};
-        opt.height = IMAGE_WIDTH;
-        opt.width = IMAGE_HEIGHT;
+        opt.height = IMAGE_HEIGHT;
+        opt.width = IMAGE_WIDTH;
         renderer_t renderer { opt };
 
         // Load the scene
-        scene_t scene ("path-to-scene-desc.scene");
+        scene_t scene("path-to-scene-desc.scene");
         renderer.load_scene(scene);
 
         // Allocate device storage for image
@@ -31,10 +30,10 @@ int main(int argc, char* argv[])
 
         // Copy result back to host
         std::vector<color_t> result(BUFFER_SIZE);
-        buffer.fetch(result.data(), buffer.size());
+        buffer.fetch(result.data(), BUFFER_SIZE_IN_BYTES);
 
         // Save image to disk
-        write_image(result, "out.png", { IMAGE_WIDTH, IMAGE_HEIGHT} );
+        write_image(result, "out.png", { IMAGE_WIDTH, IMAGE_HEIGHT });
 
         renderer.cleanup();
     }

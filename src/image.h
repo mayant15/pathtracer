@@ -7,5 +7,6 @@
 
 void write_image(const std::vector<color_t>& data, const std::string& path, uint2 dims)
 {
+    stbi_flip_vertically_on_write(1);
     stbi_write_png(path.c_str(), dims.x, dims.y, 4, data.data(), dims.x * sizeof (color_t));
 }

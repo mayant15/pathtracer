@@ -15,18 +15,20 @@ class renderer_t
 {
     // Context
     OptixDeviceContext _context = nullptr;
-    OptixShaderBindingTable sbt {};
+    OptixShaderBindingTable _sbt {};
 
     // Pipeline
     OptixModule _module = nullptr;
-    OptixProgramGroup _ray_generation_group = nullptr;
-    OptixProgramGroup _miss_group = nullptr;
+    OptixProgramGroup _raygen_pg = nullptr;
+    OptixProgramGroup _miss_pg = nullptr;
+    OptixProgramGroup _hitgroup_pg = nullptr;
     OptixPipelineCompileOptions _pipeline_options {};
     OptixPipeline _pipeline = nullptr;
 
     // Scene
     OptixTraversableHandle _scene_handle {};
     CUdeviceptr _accel_ptr {};
+    camera_t _camera {};
 
     // Config
     render_options_t _options;

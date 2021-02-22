@@ -1,6 +1,6 @@
 #pragma once
 
-#include "launch_params.h"
+#include "shader_types.h"
 
 template<typename T>
 struct sbt_record_t
@@ -10,4 +10,5 @@ struct sbt_record_t
 };
 
 using ray_gen_sbt_record_t = sbt_record_t<ray_gen_data_t>;
-using miss_sbt_record_t = sbt_record_t<int>;
+using miss_sbt_record_t = sbt_record_t<miss_data_t>;
+using hitgroup_sbt_record_t = sbt_record_t<hitgroup_data_t>;

@@ -24,7 +24,7 @@ set(PATHTRACER_LINK_LIBS
 # Build shaders
 set(PTX_PATH ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ptx)
 add_library(shaders OBJECT
-    src/draw_solid_color.cu
+    src/triangle.cu
 )
 set_property(TARGET shaders PROPERTY CUDA_PTX_COMPILATION ON)
 target_include_directories(shaders PRIVATE ${OPTIX_INCLUDE_DIRS})

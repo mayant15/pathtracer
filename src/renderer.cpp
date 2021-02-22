@@ -46,13 +46,13 @@ void renderer_t::init_module()
 
     _pipeline_options.usesMotionBlur = false;
     _pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    _pipeline_options.numPayloadValues = 2;
-    _pipeline_options.numAttributeValues = 2;
+    _pipeline_options.numPayloadValues = 3;
+    _pipeline_options.numAttributeValues = 3;
     _pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;  // TODO: should be OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW;
     _pipeline_options.pipelineLaunchParamsVariableName = "params";
+    _pipeline_options.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
 
-    // TODO: PTX string
-    const std::string ptx = load_ptx_string("draw_solid_color.ptx");
+    const std::string ptx = load_ptx_string("triangle.ptx");
     size_t sizeof_log = sizeof(_error_log);
 
     OPTIX_SAFE_CALL(optixModuleCreateFromPTX(_context, &module_compile_options, &_pipeline_options, ptx.c_str(),
@@ -61,30 +61,39 @@ void renderer_t::init_module()
 
 void renderer_t::init_programs()
 {
-    OptixProgramGroupOptions program_group_options {};
-
-    OptixProgramGroupDesc raygen_prog_group_desc {};
-    raygen_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    raygen_prog_group_desc.raygen.module = _module;
-    raygen_prog_group_desc.raygen.entryFunctionName = "__raygen__draw";
-
     size_t sizeof_log = sizeof(_error_log);
-    OPTIX_SAFE_CALL(optixProgramGroupCreate(_context, &raygen_prog_group_desc, 1, &program_group_options, _error_log,
-                                            &sizeof_log, &_ray_generation_group));
+    OptixProgramGroupOptions options {};
 
-    // Leave miss group's module and entryfunc name null
-    OptixProgramGroupDesc miss_prog_group_desc {};
-    miss_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    // Raygen program group
+    OptixProgramGroupDesc rg_desc {};
+    rg_desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    rg_desc.raygen.module = _module;
+    rg_desc.raygen.entryFunctionName = "__raygen__rg";
+    OPTIX_SAFE_CALL(optixProgramGroupCreate(_context, &rg_desc, 1, &options, _error_log, &sizeof_log,
+                                            &_raygen_pg));
 
+    // Miss program group
+    OptixProgramGroupDesc miss_desc {};
+    miss_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    miss_desc.miss.module = _module;
+    miss_desc.miss.entryFunctionName = "__miss__ms";
+    OPTIX_SAFE_CALL(optixProgramGroupCreate(_context, &miss_desc, 1, &options, _error_log, &sizeof_log,
+                                            &_miss_pg));
+
+    // Hitgroup program group
+    OptixProgramGroupDesc hitgroup_desc {};
+    hitgroup_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    hitgroup_desc.hitgroup.moduleCH = _module;
+    hitgroup_desc.hitgroup.entryFunctionNameCH = "__closesthit__ch";
     OPTIX_SAFE_CALL(
-            optixProgramGroupCreate(_context, &miss_prog_group_desc, 1, &program_group_options, _error_log, &sizeof_log,
-                                    &_miss_group));
+            optixProgramGroupCreate(_context, &hitgroup_desc, 1, &options, _error_log, &sizeof_log,
+                                    &_hitgroup_pg));
 }
 
 void renderer_t::init_pipeline()
 {
-    const uint32_t max_trace_depth = 0;
-    std::vector<OptixProgramGroup> groups = { _ray_generation_group };
+    const uint32_t max_trace_depth = 1;
+    std::vector<OptixProgramGroup> groups = { _raygen_pg, _miss_pg, _hitgroup_pg };
 
     OptixPipelineLinkOptions pipeline_link_options {};
     pipeline_link_options.maxTraceDepth = max_trace_depth;
@@ -113,28 +122,28 @@ void renderer_t::init_pipeline()
 
 void renderer_t::init_sbt()
 {
-    CUdeviceptr raygen_record;
-    const size_t raygen_record_size = sizeof(ray_gen_sbt_record_t);
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>( &raygen_record ), raygen_record_size));
+    // Raygen record
+    ray_gen_sbt_record_t rg_sbt {};
+    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_raygen_pg, &rg_sbt));
+    device_buffer_t rg_buffer { sizeof(ray_gen_sbt_record_t), &rg_sbt, true };
+    _sbt.raygenRecord = rg_buffer.data();
 
-    ray_gen_sbt_record_t rg_sbt;
-    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_ray_generation_group, &rg_sbt));
-    rg_sbt.data = { 25, 25, 255, 255 };
-    CUDA_SAFE_CALL(
-            cudaMemcpy(reinterpret_cast<void*>( raygen_record ), &rg_sbt, raygen_record_size, cudaMemcpyHostToDevice));
+    // Miss record
+    miss_sbt_record_t miss_sbt {};
+    miss_sbt.data.background = { 77, 26, 51, 255 };
+    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_miss_pg, &miss_sbt));
+    device_buffer_t miss_buffer { sizeof(miss_sbt_record_t), &miss_sbt, true };
+    _sbt.missRecordBase = miss_buffer.data();
+    _sbt.missRecordStrideInBytes = sizeof(miss_sbt_record_t);
+    _sbt.missRecordCount = 1;
 
-    CUdeviceptr miss_record;
-    size_t miss_record_size = sizeof(miss_sbt_record_t);
-    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>( &miss_record ), miss_record_size));
-    ray_gen_sbt_record_t ms_sbt;
-    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_miss_group, &ms_sbt));
-    CUDA_SAFE_CALL(
-            cudaMemcpy(reinterpret_cast<void*>( miss_record ), &ms_sbt, miss_record_size, cudaMemcpyHostToDevice));
-
-    sbt.raygenRecord = raygen_record;
-    sbt.missRecordBase = miss_record;
-    sbt.missRecordStrideInBytes = sizeof(miss_sbt_record_t);
-    sbt.missRecordCount = 1;
+    // Hitgroup record
+    hitgroup_sbt_record_t hg_sbt {};
+    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_hitgroup_pg, &hg_sbt));
+    device_buffer_t hg_buffer { sizeof(hitgroup_sbt_record_t), &hg_sbt, true };
+    _sbt.hitgroupRecordBase = hg_buffer.data();
+    _sbt.hitgroupRecordStrideInBytes = sizeof(hitgroup_sbt_record_t);
+    _sbt.hitgroupRecordCount = 1;
 }
 
 renderer_t::renderer_t(const render_options_t& opt)
@@ -151,6 +160,8 @@ renderer_t::renderer_t(const render_options_t& opt)
 
 void renderer_t::load_scene(const scene_t& scene)
 {
+    _camera = scene.camera;
+
     // TODO: See compaction
     OptixAccelBuildOptions accel_options {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
@@ -215,26 +226,37 @@ void renderer_t::render(const device_buffer_t& buffer)
 
     // Initialize parameters
     params_t params {};
-    params.image = (uchar4*) buffer.data();
+    params.image = (color_t*) buffer.data();
     params.image_width = _options.width;
+    params.image_height = _options.height;
+    params.handle = _scene_handle;
+
+    // TODO: Proper camera
+    params.camera_position = { 0.0f, 0.0f, 2.0f };
+    params.camera_u = { 1.10456955f, 0.0f, 0.0f };
+    params.camera_v = { 0.0f, 0.828427136f, 0.0f };
+    params.camera_w = { 0.0f, 0.0f, -2.0f };
 
     // Copy parameters to device
     device_buffer_t d_params { sizeof(params_t), &params };
-
     OPTIX_SAFE_CALL(
-            optixLaunch(_pipeline, stream, d_params.data(), sizeof(params_t), &sbt, _options.width, _options.height,
+            optixLaunch(_pipeline, stream, d_params.data(), sizeof(params_t), &_sbt, _options.width, _options.height,
                         1));
     CUDA_SAFE_SYNC();
 }
 
 void renderer_t::cleanup()
 {
-    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(sbt.raygenRecord)));
-    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(sbt.missRecordBase)));
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.raygenRecord)));
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.missRecordBase)));
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.hitgroupRecordBase)));
+
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_accel_ptr)));
 
     OPTIX_SAFE_CALL(optixPipelineDestroy(_pipeline));
-    OPTIX_SAFE_CALL(optixProgramGroupDestroy(_miss_group));
-    OPTIX_SAFE_CALL(optixProgramGroupDestroy(_ray_generation_group));
+    OPTIX_SAFE_CALL(optixProgramGroupDestroy(_hitgroup_pg));
+    OPTIX_SAFE_CALL(optixProgramGroupDestroy(_miss_pg));
+    OPTIX_SAFE_CALL(optixProgramGroupDestroy(_raygen_pg));
     OPTIX_SAFE_CALL(optixModuleDestroy(_module));
 
     OPTIX_SAFE_CALL(optixDeviceContextDestroy(_context));
