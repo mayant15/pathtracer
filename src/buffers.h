@@ -2,11 +2,13 @@
 
 #include <cuda_runtime.h>
 #include <cassert>
+#include "checkers.h"
 
 class device_buffer_t
 {
     void* _pointer;
     size_t _size;
+    bool _persists;
 
 public:
     /*!
@@ -14,14 +16,15 @@ public:
      * @param size Size (in bytes) for the buffer
      * @param data (Optional) Data to copy to the device
      */
-    explicit device_buffer_t(size_t size, void* data = nullptr)
+    explicit device_buffer_t(size_t size, void* data = nullptr, bool persists = false)
             : _size(size),
-              _pointer(nullptr)
+              _pointer(nullptr),
+              _persists(persists)
     {
         cudaMalloc(&_pointer, _size);
         if (data != nullptr)
         {
-            cudaMemcpy(_pointer, data, _size, cudaMemcpyHostToDevice);
+            CUDA_SAFE_CALL(cudaMemcpy(_pointer, data, _size, cudaMemcpyHostToDevice));
         }
     }
 
@@ -34,7 +37,7 @@ public:
     {
         assert(_pointer != nullptr);
         assert(size <= _size);
-        cudaMemcpy(dst, _pointer, size, cudaMemcpyDeviceToHost);
+        CUDA_SAFE_CALL(cudaMemcpy(dst, _pointer, size, cudaMemcpyDeviceToHost));
     }
 
     [[nodiscard]] size_t size() const
@@ -45,6 +48,16 @@ public:
 
     ~device_buffer_t()
     {
-        cudaFree(_pointer);
+        if (!_persists)
+        {
+            try
+            {
+                CUDA_SAFE_CALL(cudaFree(_pointer));
+            }
+            catch (const std::exception& e)
+            {
+                LOG_ERROR("Failed to free resources: %s\n", e.what());
+            }
+        }
     }
 };

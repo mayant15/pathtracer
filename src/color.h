@@ -1,5 +1,5 @@
 #pragma once
 
-#include <cuda_runtime.h>
+#include <vector_types.h>
 
 using color_t = uchar4;

@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "module.h"
+#include "buffers.h"
 
 // This should be in one translation unit only
 #include <optix_function_table_definition.h>
@@ -148,6 +149,65 @@ renderer_t::renderer_t(const render_options_t& opt)
     init_sbt();
 }
 
+void renderer_t::load_scene(const scene_t& scene)
+{
+    // TODO: See compaction
+    OptixAccelBuildOptions accel_options {};
+    accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
+    accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+
+    // Copy vertices to device
+    device_buffer_t d_vertices { sizeof(float3) * scene.vertices.size(), (void*) scene.vertices.data() };
+    auto d_vertex_ptr = d_vertices.data();
+
+    // Our build input is a simple list of non-indexed triangle vertices
+    const unsigned int triangle_input_flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
+    OptixBuildInput build_input {};
+    build_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+    build_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+    build_input.triangleArray.numVertices = scene.vertices.size();
+    build_input.triangleArray.vertexBuffers = &d_vertex_ptr;
+    build_input.triangleArray.flags = triangle_input_flags;
+    build_input.triangleArray.numSbtRecords = 1;
+
+    // Estimate memory usage
+    OptixAccelBufferSizes buffer_sizes;
+    OPTIX_SAFE_CALL(optixAccelComputeMemoryUsage(
+            _context,
+            &accel_options,
+            &build_input,
+            1, // Number of build inputs
+            &buffer_sizes
+    ));
+
+    // Allocate estimated memory
+    device_buffer_t temp_buffer { buffer_sizes.tempSizeInBytes };
+
+    // The output buffer should persist, we'll save the pointer in the class
+    device_buffer_t output_buffer { buffer_sizes.outputSizeInBytes, nullptr, true };
+
+    // Build the structure
+    OPTIX_SAFE_CALL(optixAccelBuild(
+            _context,
+            0,                  // CUDA stream
+            &accel_options,
+            &build_input,
+            1,                  // num build inputs
+            temp_buffer.data(),
+            buffer_sizes.tempSizeInBytes,
+            output_buffer.data(),
+            buffer_sizes.outputSizeInBytes,
+            &_scene_handle,
+            nullptr,            // emitted property list
+            0                   // num emitted properties
+    ));
+
+    // Save the accel pointer
+    _accel_ptr = output_buffer.data();
+
+    // Non-persistent buffers will be cleaned
+}
+
 void renderer_t::render(const device_buffer_t& buffer)
 {
     CUstream stream;
@@ -159,10 +219,11 @@ void renderer_t::render(const device_buffer_t& buffer)
     params.image_width = _options.width;
 
     // Copy parameters to device
-    device_buffer_t d_params { sizeof (params_t), &params };
+    device_buffer_t d_params { sizeof(params_t), &params };
 
     OPTIX_SAFE_CALL(
-            optixLaunch(_pipeline, stream, d_params.data(), sizeof(params_t), &sbt, _options.width, _options.height, 1));
+            optixLaunch(_pipeline, stream, d_params.data(), sizeof(params_t), &sbt, _options.width, _options.height,
+                        1));
     CUDA_SAFE_SYNC();
 }
 
