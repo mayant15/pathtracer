@@ -15,10 +15,10 @@ extern "C" __constant__ params_t params;
 static __forceinline__ __device__ void set_payload(float4 p)
 {
     // Set the payload, but change [0, 1] to [0, 255]
-    optixSetPayload_0((unsigned int) (255 * p.x));
-    optixSetPayload_1((unsigned int) (255 * p.y));
-    optixSetPayload_2((unsigned int) (255 * p.z));
-    // optixSetPayload_3(p.w); alpha is always 255, doesn't need to be on the payload
+    optixSetPayload_0(static_cast<unsigned int>(255 * p.x));
+    optixSetPayload_1(static_cast<unsigned int>(255 * p.y));
+    optixSetPayload_2(static_cast<unsigned int>(255 * p.z));
+    optixSetPayload_3(static_cast<unsigned int>(255 * p.w));
 }
 
 static __forceinline__ __device__ void set_payload(uchar4 p)
@@ -27,10 +27,10 @@ static __forceinline__ __device__ void set_payload(uchar4 p)
     optixSetPayload_0(p.x);
     optixSetPayload_1(p.y);
     optixSetPayload_2(p.z);
-    // optixSetPayload_3(p.w); alpha is always 255, doesn't need to be on the payload
+    optixSetPayload_3(p.w);
 }
 
-static __device__ void compute_ray(uint3 idx, uint3 dims, float3& origin_out, float3& dir_out)
+static __forceinline__ __device__ void compute_ray(uint3 idx, uint3 dims, float3& origin_out, float3& dir_out)
 {
     // Send a ray out from the camera, depending on the position in the launch grid
     // coords should be transformed from [0, 1] to [-1, 1]
@@ -48,14 +48,13 @@ static __device__ void compute_ray(uint3 idx, uint3 dims, float3& origin_out, fl
 extern "C" __global__ void __raygen__rg()
 {
     // Find ray origin and direction
-    const uint3 idx = optixGetLaunchIndex();
-    const uint3 dims = optixGetLaunchDimensions();
-    float3 ray_origin;
-    float3 ray_dir;
+    float3 ray_origin, ray_dir;
+    const auto idx = optixGetLaunchIndex();
+    const auto dims = optixGetLaunchDimensions();
     compute_ray(idx, dims, ray_origin, ray_dir);
 
     // Trace the ray
-    unsigned int p0, p1, p2;
+    unsigned int p0, p1, p2, p3;
     optixTrace(
             params.handle,
             ray_origin,
@@ -66,11 +65,11 @@ extern "C" __global__ void __raygen__rg()
             OptixVisibilityMask(255),
             OPTIX_RAY_FLAG_NONE,
             0, 1, 0, // SBT
-            p0, p1, p2                 // payload
+            p0, p1, p2, p3                 // payload
     );
 
     // The payload at the end of the ray's path will be color, use it at full opacity
-    params.image[idx.y * params.image_width + idx.x] = make_uchar4(p0, p1, p2, 255);
+    params.image[idx.y * params.image_width + idx.x] = make_uchar4(p0, p1, p2, p3);
 }
 
 extern "C" __global__ void __miss__ms()
@@ -81,8 +80,26 @@ extern "C" __global__ void __miss__ms()
 
 extern "C" __global__ void __closesthit__ch()
 {
-    const float2 barycentrics = optixGetTriangleBarycentrics();
-    const float4 payload = make_float4(barycentrics.x, barycentrics.y, 1.0f, 1.0f);
+    auto data = reinterpret_cast<hitgroup_data_t*>(optixGetSbtDataPointer());
+    auto id = optixGetPrimitiveIndex();
+    auto& idx = data->indices[id];
+
+    // Calculate normal for this face
+    auto& A = data->vertices[idx.x];
+    auto& B = data->vertices[idx.y];
+    auto& C = data->vertices[idx.z];
+    const float3& N = normalize(cross(B - A, C - A));
+
+    // Calculate radiance
+    auto rayDir = optixGetWorldRayDirection();
+    float weight = 0.2f + 0.8f * fabsf(dot(rayDir, N));
+    float3 radiance = weight * make_float3(
+            static_cast<float>(data->color.x) / 255.0f,
+            static_cast<float>(data->color.y) / 255.0f,
+            static_cast<float>(data->color.z) / 255.0f
+    );
+
+    auto payload = make_float4(radiance.x, radiance.y, radiance.z, 1.0f);
     set_payload(payload);
 }
 

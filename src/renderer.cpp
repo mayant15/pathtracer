@@ -46,7 +46,7 @@ void renderer_t::init_module()
 
     _pipeline_options.usesMotionBlur = false;
     _pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    _pipeline_options.numPayloadValues = 3;
+    _pipeline_options.numPayloadValues = 4;
     _pipeline_options.numAttributeValues = 3;
     _pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;  // TODO: should be OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW;
     _pipeline_options.pipelineLaunchParamsVariableName = "params";
@@ -139,6 +139,10 @@ void renderer_t::init_sbt()
 
     // Hitgroup record
     hitgroup_sbt_record_t hg_sbt {};
+    hg_sbt.data.color = color_t { 255, 119, 172, 255 };
+    hg_sbt.data.vertices = (float3*) _d_vertex_ptr;
+    hg_sbt.data.indices = (uint3*) _d_index_ptr;
+
     OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_hitgroup_pg, &hg_sbt));
     device_buffer_t hg_buffer { sizeof(hitgroup_sbt_record_t), &hg_sbt, true };
     _sbt.hitgroupRecordBase = hg_buffer.data();
@@ -154,8 +158,6 @@ renderer_t::renderer_t(const render_options_t& opt)
     init_module();
     init_programs();
     init_pipeline();
-
-    init_sbt();
 }
 
 void renderer_t::load_scene(const scene_t& scene)
@@ -170,10 +172,10 @@ void renderer_t::load_scene(const scene_t& scene)
     // Copy data to device
     std::vector<float3> vertices = scene.meshes[0].vertices;
     std::vector<uint3> indices = scene.meshes[0].indices;
-    device_buffer_t d_vertices { sizeof(float3) * vertices.size(), (void*) vertices.data() };
-    device_buffer_t d_indices { sizeof(uint3) * indices.size(), (void*) indices.data() };
-    auto d_vertex_ptr = d_vertices.data();
-    auto d_index_ptr = d_indices.data();
+    device_buffer_t d_vertices { sizeof(float3) * vertices.size(), (void*) vertices.data(), true };
+    device_buffer_t d_indices { sizeof(uint3) * indices.size(), (void*) indices.data(), true };
+    _d_vertex_ptr = d_vertices.data();
+    _d_index_ptr = d_indices.data();
 
     // Prepare triangle build input
     OptixBuildInput input {};
@@ -183,13 +185,13 @@ void renderer_t::load_scene(const scene_t& scene)
     input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     input.triangleArray.vertexStrideInBytes = sizeof(float3);
     input.triangleArray.numVertices = vertices.size();
-    input.triangleArray.vertexBuffers = &d_vertex_ptr;
+    input.triangleArray.vertexBuffers = &_d_vertex_ptr;
 
     // indices
     input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     input.triangleArray.indexStrideInBytes = sizeof(uint3);
     input.triangleArray.numIndexTriplets = indices.size();
-    input.triangleArray.indexBuffer = d_index_ptr;
+    input.triangleArray.indexBuffer = _d_index_ptr;
 
     // SBT offsets
     const unsigned int flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
@@ -232,6 +234,8 @@ void renderer_t::load_scene(const scene_t& scene)
     _accel_ptr = output_buffer.data();
 
     // Non-persistent buffers will be cleaned
+    // TODO: should this be here?
+    init_sbt();
 }
 
 void renderer_t::render(const device_buffer_t& buffer)
@@ -257,6 +261,9 @@ void renderer_t::render(const device_buffer_t& buffer)
 
 void renderer_t::cleanup()
 {
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_d_vertex_ptr)));
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_d_index_ptr)));
+
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.raygenRecord)));
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.missRecordBase)));
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.hitgroupRecordBase)));

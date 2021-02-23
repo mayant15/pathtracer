@@ -11,7 +11,7 @@ struct params_t
     unsigned int image_height;
 
     // Camera
-    struct camera
+    struct
     {
         float3 position;
         float3 u, v, w;
@@ -21,10 +21,18 @@ struct params_t
     OptixTraversableHandle handle;
 };
 
+struct ray_gen_data_t
+{
+};
+
 struct miss_data_t
 {
     color_t background;
 };
 
-struct hitgroup_data_t {};
-struct ray_gen_data_t {};
+struct hitgroup_data_t
+{
+    float3* vertices;
+    uint3* indices;
+    color_t color;
+};

@@ -8,7 +8,7 @@
 
 struct camera_t
 {
-    float3 position { 1.7f, 1.5f, 3.0f };
+    float3 position { 1.2f, 0.3f, 2.0f };
     float3 look_at { 0.0f, 0.0f, 0.0f };
     float fov = 45;
     float aspect_ratio = 1024.0f / 728.0f;

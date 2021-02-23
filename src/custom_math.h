@@ -61,3 +61,8 @@ static HOST_OR_DEVICE float3 cross(float3 a, float3 b)
                       a.x * b.y - a.y * b.x
     );
 }
+
+static HOST_OR_DEVICE float dot(float3 a, float3 b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}

@@ -28,6 +28,8 @@ class renderer_t
     // Scene
     OptixTraversableHandle _scene_handle {};
     CUdeviceptr _accel_ptr {};
+    CUdeviceptr _d_vertex_ptr {};
+    CUdeviceptr _d_index_ptr {};
     camera_t _camera {};
 
     // Config
