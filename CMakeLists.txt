@@ -32,6 +32,7 @@ target_include_directories(shaders PRIVATE ${OPTIX_INCLUDE_DIRS})
 # Build the pathtracer
 set(PATHTRACER_SOURCES
     external/stb_image_write.cpp
+    external/tiny_obj_loader.cpp
 
     src/main.cpp
     src/renderer.cpp

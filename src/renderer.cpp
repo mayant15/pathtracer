@@ -168,10 +168,12 @@ void renderer_t::load_scene(const scene_t& scene)
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     // Copy data to device
-    device_buffer_t d_vertices { sizeof(float3) * scene.vertices.size(), (void*) scene.vertices.data() };
-//    device_buffer_t d_indices { sizeof (uint3) * scene.indices.size(), (void*) scene.indices.data() };
+    std::vector<float3> vertices = scene.meshes[0].vertices;
+    std::vector<uint3> indices = scene.meshes[0].indices;
+    device_buffer_t d_vertices { sizeof(float3) * vertices.size(), (void*) vertices.data() };
+    device_buffer_t d_indices { sizeof(uint3) * indices.size(), (void*) indices.data() };
     auto d_vertex_ptr = d_vertices.data();
-//    auto d_index_ptr = d_indices.data();
+    auto d_index_ptr = d_indices.data();
 
     // Prepare triangle build input
     OptixBuildInput input {};
@@ -179,15 +181,15 @@ void renderer_t::load_scene(const scene_t& scene)
 
     // vertices
     input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    input.triangleArray.vertexStrideInBytes = 3 * sizeof (float);
-    input.triangleArray.numVertices = scene.vertices.size() / 3;
+    input.triangleArray.vertexStrideInBytes = sizeof(float3);
+    input.triangleArray.numVertices = vertices.size();
     input.triangleArray.vertexBuffers = &d_vertex_ptr;
 
     // indices
-//    input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-//    input.triangleArray.indexStrideInBytes = sizeof (uint3);
-//    input.triangleArray.numIndexTriplets = scene.indices.size();
-//    input.triangleArray.indexBuffer = d_index_ptr;
+    input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+    input.triangleArray.indexStrideInBytes = sizeof(uint3);
+    input.triangleArray.numIndexTriplets = indices.size();
+    input.triangleArray.indexBuffer = d_index_ptr;
 
     // SBT offsets
     const unsigned int flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
