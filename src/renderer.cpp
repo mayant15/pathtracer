@@ -130,7 +130,7 @@ void renderer_t::init_sbt()
 
     // Miss record
     miss_sbt_record_t miss_sbt {};
-    miss_sbt.data.background = { 77, 77, 77, 255 };
+    miss_sbt.data.background = { 135, 206, 235, 255 };
     OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_miss_pg, &miss_sbt));
     device_buffer_t miss_buffer { sizeof(miss_sbt_record_t), &miss_sbt, true };
     _sbt.missRecordBase = miss_buffer.data();
