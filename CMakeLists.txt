@@ -35,7 +35,6 @@ set(PATHTRACER_SOURCES
 
     src/main.cpp
     src/renderer.cpp
-    src/scene.cpp
 )
 
 add_executable(pathtracer ${PATHTRACER_SOURCES})

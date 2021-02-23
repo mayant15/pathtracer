@@ -130,7 +130,7 @@ void renderer_t::init_sbt()
 
     // Miss record
     miss_sbt_record_t miss_sbt {};
-    miss_sbt.data.background = { 77, 26, 51, 255 };
+    miss_sbt.data.background = { 77, 77, 77, 255 };
     OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_miss_pg, &miss_sbt));
     device_buffer_t miss_buffer { sizeof(miss_sbt_record_t), &miss_sbt, true };
     _sbt.missRecordBase = miss_buffer.data();
@@ -167,26 +167,39 @@ void renderer_t::load_scene(const scene_t& scene)
     accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
-    // Copy vertices to device
+    // Copy data to device
     device_buffer_t d_vertices { sizeof(float3) * scene.vertices.size(), (void*) scene.vertices.data() };
+//    device_buffer_t d_indices { sizeof (uint3) * scene.indices.size(), (void*) scene.indices.data() };
     auto d_vertex_ptr = d_vertices.data();
+//    auto d_index_ptr = d_indices.data();
 
-    // Our build input is a simple list of non-indexed triangle vertices
-    const unsigned int triangle_input_flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
-    OptixBuildInput build_input {};
-    build_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-    build_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    build_input.triangleArray.numVertices = scene.vertices.size();
-    build_input.triangleArray.vertexBuffers = &d_vertex_ptr;
-    build_input.triangleArray.flags = triangle_input_flags;
-    build_input.triangleArray.numSbtRecords = 1;
+    // Prepare triangle build input
+    OptixBuildInput input {};
+    input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+
+    // vertices
+    input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+    input.triangleArray.vertexStrideInBytes = 3 * sizeof (float);
+    input.triangleArray.numVertices = scene.vertices.size() / 3;
+    input.triangleArray.vertexBuffers = &d_vertex_ptr;
+
+    // indices
+//    input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+//    input.triangleArray.indexStrideInBytes = sizeof (uint3);
+//    input.triangleArray.numIndexTriplets = scene.indices.size();
+//    input.triangleArray.indexBuffer = d_index_ptr;
+
+    // SBT offsets
+    const unsigned int flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
+    input.triangleArray.flags = flags;
+    input.triangleArray.numSbtRecords = 1;
 
     // Estimate memory usage
     OptixAccelBufferSizes buffer_sizes;
     OPTIX_SAFE_CALL(optixAccelComputeMemoryUsage(
             _context,
             &accel_options,
-            &build_input,
+            &input,
             1, // Number of build inputs
             &buffer_sizes
     ));
@@ -202,7 +215,7 @@ void renderer_t::load_scene(const scene_t& scene)
             _context,
             0,                  // CUDA stream
             &accel_options,
-            &build_input,
+            &input,
             1,                  // num build inputs
             temp_buffer.data(),
             buffer_sizes.tempSizeInBytes,
