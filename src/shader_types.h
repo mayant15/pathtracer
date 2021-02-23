@@ -1,6 +1,7 @@
 #pragma once
 
 #include "color.h"
+#include <optix.h>
 
 struct params_t
 {
@@ -10,10 +11,11 @@ struct params_t
     unsigned int image_height;
 
     // Camera
-    float3 camera_position;
-    float3 camera_u;
-    float3 camera_v;
-    float3 camera_w;
+    struct camera
+    {
+        float3 position;
+        float3 u, v, w;
+    } camera;
 
     // Acceleration structure
     OptixTraversableHandle handle;

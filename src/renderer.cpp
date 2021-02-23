@@ -230,12 +230,7 @@ void renderer_t::render(const device_buffer_t& buffer)
     params.image_width = _options.width;
     params.image_height = _options.height;
     params.handle = _scene_handle;
-
-    // TODO: Proper camera
-    params.camera_position = { 0.0f, 0.0f, 2.0f };
-    params.camera_u = { 1.10456955f, 0.0f, 0.0f };
-    params.camera_v = { 0.0f, 0.828427136f, 0.0f };
-    params.camera_w = { 0.0f, 0.0f, -2.0f };
+    _camera.set_params(params);
 
     // Copy parameters to device
     device_buffer_t d_params { sizeof(params_t), &params };

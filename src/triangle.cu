@@ -4,38 +4,13 @@
 
 #include <optix.h>
 #include "shader_types.h"
+#include "custom_math.h"
 
 // no name mangling
 extern "C" __constant__ params_t params;
 
 //*****************************************************************************
 // HELPER FUNCTIONS
-
-static __forceinline__ __device__ float3 operator+(const float3& a, const float3& b)
-{
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float2 operator+(const float2& a, const float2& b)
-{
-    return make_float2(a.x + b.x, a.y + b.y);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, const float3& v)
-{
-    return make_float3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float2 operator*(float s, const float2& v)
-{
-    return make_float2(s * v.x, s * v.y);
-}
-
-static __forceinline__ __device__ float3 normalize(float3 v)
-{
-    float n = sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    return make_float3(v.x / n, v.y / n, v.z / n);
-}
 
 static __forceinline__ __device__ void set_payload(float4 p)
 {
@@ -62,8 +37,8 @@ static __device__ void compute_ray(uint3 idx, uint3 dims, float3& origin_out, fl
     float2 coords = make_float2((float) idx.x / (float) dims.x, (float) idx.y / (float) dims.y);
     coords = (2.0f * coords) + make_float2(-1.0f, -1.0f);
 
-    dir_out = normalize((coords.x * params.camera_u) + (coords.y * params.camera_v) + params.camera_w);
-    origin_out = params.camera_position;
+    dir_out = normalize((coords.x * params.camera.u) + (coords.y * params.camera.v) + params.camera.w);
+    origin_out = params.camera.position;
 }
 
 
