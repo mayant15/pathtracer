@@ -28,7 +28,7 @@ int main(int argc, char* argv[])
         renderer_t renderer { opt };
 
         // Load the scene
-        scene_t scene("path-to-scene-desc.scene");
+        scene_t scene("../../assets/samplescene.obj");
         renderer.load_scene(scene);
 
         // Allocate device storage for image

@@ -92,7 +92,7 @@ void renderer_t::init_programs()
 void renderer_t::init_pipeline()
 {
     const uint32_t max_trace_depth = 1;
-    std::vector <OptixProgramGroup> groups = { _raygen_pg, _miss_pg, _hitgroup_pg };
+    std::vector<OptixProgramGroup> groups = { _raygen_pg, _miss_pg, _hitgroup_pg };
 
     OptixPipelineLinkOptions pipeline_link_options {};
     pipeline_link_options.maxTraceDepth = max_trace_depth;
@@ -150,20 +150,25 @@ static void create_miss_record(OptixProgramGroup& pg, OptixShaderBindingTable& s
 
 static void create_hitgroup_record(OptixProgramGroup& pg, OptixShaderBindingTable& sbt, const scene_t* scene)
 {
-    hitgroup_sbt_record_t record {};
-    record.data.color = { 255, 119, 172, 255 };
-    record.data.vertices = reinterpret_cast<float3*>(scene->mesh.d_vertices.data);
-    record.data.indices = reinterpret_cast<uint3*>(scene->mesh.d_indices.data);
+    // Generate hitgroup records for all meshes
+    std::vector<hitgroup_sbt_record_t> records(scene->meshes.size());
+    for (size_t i = 0; i < records.size(); ++i)
+    {
+        records[i].data.color = { 255, 119, static_cast<unsigned char>(i * 120), 255 };
+        records[i].data.vertices = reinterpret_cast<float3*>(scene->get_device_ptr());
+        records[i].data.indices = reinterpret_cast<uint3*>(scene->meshes[i].get_device_ptr());
+        OPTIX_SAFE_CALL(optixSbtRecordPackHeader(pg, &records[i]));
+    }
 
-    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(pg, &record));
-
+    // Copy records to the device
     unsafe::device_buffer_t buffer;
-    buffer.allocate(sizeof(hitgroup_sbt_record_t));
-    buffer.load_data(&record, buffer.size);
+    buffer.allocate(sizeof(hitgroup_sbt_record_t) * records.size());
+    buffer.load_data(records.data(), buffer.size);
 
+    // Load the SBT
     sbt.hitgroupRecordBase = reinterpret_cast<CUdeviceptr>(buffer.data);
     sbt.hitgroupRecordStrideInBytes = sizeof(hitgroup_sbt_record_t);
-    sbt.hitgroupRecordCount = 1;
+    sbt.hitgroupRecordCount = records.size();
 }
 
 void renderer_t::load_sbt()
@@ -185,68 +190,79 @@ renderer_t::renderer_t(const render_options_t& opt)
 
 void renderer_t::build_accel()
 {
-    // Copy data to device
-    auto d_vertex_tmp_ptr = reinterpret_cast<CUdeviceptr>(_scene_ptr->mesh.d_vertices.data);
-
-    // TODO: See compaction
-    OptixAccelBuildOptions accel_options {};
-    accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
-    accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-
-    // Prepare triangle build input
-    OptixBuildInput input {};
-    input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-
-    // vertices
-    input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    input.triangleArray.vertexStrideInBytes = sizeof(float3);
-    input.triangleArray.numVertices = _scene_ptr->mesh.vertices.size();
-    input.triangleArray.vertexBuffers = &d_vertex_tmp_ptr;
-
-    // indices
-    input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    input.triangleArray.indexStrideInBytes = sizeof(uint3);
-    input.triangleArray.numIndexTriplets = _scene_ptr->mesh.indices.size();
-    input.triangleArray.indexBuffer = reinterpret_cast<CUdeviceptr>(_scene_ptr->mesh.d_indices.data);
-
-    // SBT offsets
+    // We need a pointer to the CUdeviceptr
+    auto d_vertex_tmp_ptr = _scene_ptr->get_device_ptr();
     const unsigned int flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
-    input.triangleArray.flags = flags;
-    input.triangleArray.numSbtRecords = 1;
+
+    // Prepare build inputs for all meshes
+    std::vector<OptixBuildInput> inputs(_scene_ptr->meshes.size());
+    for (size_t i = 0; i < inputs.size(); ++i)
+    {
+        inputs[i].type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+
+        // vertices
+        inputs[i].triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+        inputs[i].triangleArray.vertexStrideInBytes = sizeof(float3);
+        inputs[i].triangleArray.numVertices = _scene_ptr->vertices.size();
+        inputs[i].triangleArray.vertexBuffers = &d_vertex_tmp_ptr;
+
+        // indices
+        inputs[i].triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+        inputs[i].triangleArray.indexStrideInBytes = sizeof(uint3);
+        inputs[i].triangleArray.numIndexTriplets = _scene_ptr->meshes[i].indices.size();
+        inputs[i].triangleArray.indexBuffer = _scene_ptr->meshes[i].get_device_ptr();
+
+        // SBT offsets
+        inputs[i].triangleArray.flags = flags;
+        inputs[i].triangleArray.numSbtRecords = 1;
+        // TODO: SBT index offsets here?
+    }
+
+    OptixAccelBuildOptions accel_options {};
+    accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE | OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
+    accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     // Estimate memory usage
     OptixAccelBufferSizes buffer_sizes;
     OPTIX_SAFE_CALL(optixAccelComputeMemoryUsage(
             _context,
             &accel_options,
-            &input,
-            1, // Number of build inputs
+            inputs.data(),
+            inputs.size(),
             &buffer_sizes
     ));
 
-    // Allocate estimated memory
-    device_buffer_t temp_buffer { buffer_sizes.tempSizeInBytes };
+    // Prepare compaction
+    device_buffer_t compacted_size_buffer { sizeof(uint64_t) };
+    OptixAccelEmitDesc emit;
+    emit.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+    emit.result = compacted_size_buffer.data();
 
-    // The output buffer should persist, we'll save the pointer in the class
-    _gas.allocate(buffer_sizes.outputSizeInBytes);
+    // Allocate estimated memory
+    device_buffer_t tmp { buffer_sizes.tempSizeInBytes };
+    device_buffer_t uncompacted { buffer_sizes.outputSizeInBytes };
 
     // Build the structure
-    OPTIX_SAFE_CALL(optixAccelBuild(
-            _context,
-            0,                  // CUDA stream
-            &accel_options,
-            &input,
-            1,                  // num build inputs
-            temp_buffer.data(),
-            buffer_sizes.tempSizeInBytes,
-            reinterpret_cast<CUdeviceptr>(_gas.data),
-            buffer_sizes.outputSizeInBytes,
-            &_traversable_handle,
-            nullptr,            // emitted property list
-            0                   // num emitted properties
+    OPTIX_SAFE_CALL(optixAccelBuild(_context, 0, &accel_options,
+                                    inputs.data(), // Build inputs
+                                    inputs.size(),
+                                    tmp.data(),    // Temporary buffer
+                                    tmp.size(),
+                                    uncompacted.data(), // Output buffer
+                                    uncompacted.size(),
+                                    &_traversable_handle, &emit, 1
     ));
+    CUDA_SAFE_SYNC();
 
-    // Non-persistent buffers will be cleaned
+    // Compaction
+    uint64_t compacted_size;
+    compacted_size_buffer.fetch(&compacted_size, sizeof(uint64_t));
+    _gas.allocate(compacted_size);
+
+    OPTIX_SAFE_CALL(
+            optixAccelCompact(_context, 0, _traversable_handle, reinterpret_cast<CUdeviceptr>(_gas.data), _gas.size,
+                              &_traversable_handle));
+    CUDA_SAFE_SYNC();
 }
 
 void renderer_t::load_scene(const scene_t& scene)

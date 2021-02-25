@@ -4,15 +4,15 @@
 #include "shader_types.h"
 
 #include <tiny_obj_loader.h>
-#include <tinyexr.h>
 
+#include <utility>
 #include <vector>
 #include <string>
 
 struct camera_t
 {
-    float3 position { 1.2f, 0.3f, 2.0f };
-    float3 look_at { 0.0f, 0.0f, 0.0f };
+    float3 position { 3.5f, 4.0f, 4.0f };
+    float3 look_at { 0.0f, 1.0f, -2.0f };
     float fov = 45;
     float aspect_ratio = 1024.0f / 728.0f;
 
@@ -37,15 +37,38 @@ struct camera_t
     }
 };
 
-struct mesh_t
+namespace unsafe
+{
+    struct mesh_t
+    {
+        std::vector<uint3> indices;
+
+        void load()
+        {
+            _buffer.allocate(indices.size() * sizeof(uint3));
+            _buffer.load_data(indices.data(), _buffer.size);
+        }
+
+        void unload()
+        {
+            _buffer.free();
+        }
+
+        [[nodiscard]] CUdeviceptr get_device_ptr() const
+        { return reinterpret_cast<CUdeviceptr>(_buffer.data); }
+
+    private:
+        unsafe::device_buffer_t _buffer;
+    };
+}
+
+struct scene_t
 {
     std::vector<float3> vertices;
-    std::vector<uint3> indices;
+    std::vector<unsafe::mesh_t> meshes;
+    camera_t camera;
 
-    unsafe::device_buffer_t d_vertices;
-    unsafe::device_buffer_t d_indices;
-
-    explicit mesh_t(const std::string& path)
+    explicit scene_t(const std::string& path)
     {
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
@@ -56,9 +79,10 @@ struct mesh_t
 
         if (!ret && !err.empty())
         {
-            LOG_ERROR("ERROR: Cannot load OBJ at path %s\n", path.c_str());
+            LOG_ERROR("ERROR: Cannot load scene at path %s\n%s\n", path.c_str(), err.c_str());
         }
 
+        // Load vertices
         for (size_t i = 0; i < attrib.vertices.size(); i += 3)
         {
             vertices.push_back({
@@ -68,66 +92,41 @@ struct mesh_t
                                });
         }
 
-        for (auto& shape : shapes)
-        {
-            for (size_t index_offset = 0; index_offset + 2 < shape.mesh.indices.size(); index_offset += 3)
-            {
-                indices.push_back({
-                                          (unsigned int) shape.mesh.indices[index_offset].vertex_index,
-                                          (unsigned int) shape.mesh.indices[index_offset + 1].vertex_index,
-                                          (unsigned int) shape.mesh.indices[index_offset + 2].vertex_index
-                                  });
-            }
-        }
-
         // Copy to the device
         size_t buffer_size = vertices.size() * sizeof(float3);
         d_vertices.allocate(buffer_size);
         d_vertices.load_data(vertices.data(), buffer_size);
 
-        buffer_size = indices.size() * sizeof(uint3);
-        d_indices.allocate(buffer_size);
-        d_indices.load_data(indices.data(), buffer_size);
-    }
-
-    ~mesh_t()
-    {
-        d_vertices.free();
-        d_indices.free();
-    }
-};
-
-struct scene_t
-{
-    mesh_t mesh;
-    camera_t camera;
-
-    explicit scene_t(const std::string& path)
-            : mesh("../../assets/suzanne.obj")
-    {}
-};
-
-struct cubemap_t
-{
-    float* data = nullptr;
-    int width = 0;
-    int height = 0;
-
-    explicit cubemap_t(const std::string& path)
-    {
-        const char* error;
-        if (LoadEXR(&data, &width, &height, path.c_str(), &error) != TINYEXR_SUCCESS)
+        // Load indices
+        meshes.resize(shapes.size());
+        for (size_t i = 0; i < shapes.size(); ++i)
         {
-            if (error)
+            tinyobj::shape_t& shape = shapes[i];
+            for (size_t index_offset = 0; index_offset + 2 < shape.mesh.indices.size(); index_offset += 3)
             {
-                LOG_ERROR("ERROR: Cannot load EXR at path %s\n%s", path.c_str(), error);
-                FreeEXRErrorMessage(error);
+                meshes[i].indices.push_back({
+                                                    (unsigned int) shape.mesh.indices[index_offset].vertex_index,
+                                                    (unsigned int) shape.mesh.indices[index_offset + 1].vertex_index,
+                                                    (unsigned int) shape.mesh.indices[index_offset + 2].vertex_index
+                                            });
             }
+            meshes[i].load();
         }
     }
 
-    ~cubemap_t()
+    [[nodiscard]] CUdeviceptr get_device_ptr() const
+    { return reinterpret_cast<CUdeviceptr>(d_vertices.data); }
+
+    ~scene_t()
     {
-        free(data);
+        for (auto& mesh : meshes)
+        {
+            mesh.unload();
+        }
+
+        d_vertices.free();
     }
+
+private:
+    unsafe::device_buffer_t d_vertices;
 };
