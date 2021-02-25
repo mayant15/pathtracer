@@ -23,15 +23,13 @@ struct camera_t
         float3 w = look_at - position;
         float l = length(w) * TANF(fov * M_PI / 180.0f);
 
-        float3 u = normalize(cross(w, { 0.0f, 1.0f, 0.0f }));
-        float3 v = normalize(cross(u, w));
-
         // Horizontal half-extent
-        u = l * u;
+        float3 u = l * normalize(cross(w, { 0.0f, 1.0f, 0.0f }));
 
         // Vertical half-extent
-        v = (l / aspect_ratio) * v;
+        float3 v = (l / aspect_ratio) * normalize(cross(u, w));
 
+        // Setup parameters
         params.camera.position = position;
         params.camera.u = u;
         params.camera.v = v;
@@ -43,6 +41,9 @@ struct mesh_t
 {
     std::vector<float3> vertices;
     std::vector<uint3> indices;
+
+    unsafe::device_buffer_t d_vertices;
+    unsafe::device_buffer_t d_indices;
 
     explicit mesh_t(const std::string& path)
     {
@@ -78,7 +79,32 @@ struct mesh_t
                                   });
             }
         }
+
+        // Copy to the device
+        size_t buffer_size = vertices.size() * sizeof(float3);
+        d_vertices.allocate(buffer_size);
+        d_vertices.load_data(vertices.data(), buffer_size);
+
+        buffer_size = indices.size() * sizeof(uint3);
+        d_indices.allocate(buffer_size);
+        d_indices.load_data(indices.data(), buffer_size);
     }
+
+    ~mesh_t()
+    {
+        d_vertices.free();
+        d_indices.free();
+    }
+};
+
+struct scene_t
+{
+    mesh_t mesh;
+    camera_t camera;
+
+    explicit scene_t(const std::string& path)
+            : mesh("../../assets/suzanne.obj")
+    {}
 };
 
 struct cubemap_t
@@ -103,18 +129,5 @@ struct cubemap_t
     ~cubemap_t()
     {
         free(data);
-    }
-};
-
-struct scene_t
-{
-    std::vector<mesh_t> meshes;
-    cubemap_t sky;
-    camera_t camera;
-
-    explicit scene_t(const std::string& path)
-            : sky("../../assets/sky.exr")
-    {
-        meshes.emplace_back("../../assets/suzanne.obj");
     }
 };

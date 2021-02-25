@@ -1,6 +1,5 @@
 #include "renderer.h"
 #include "module.h"
-#include "buffers.h"
 
 // This should be in one translation unit only
 #include <optix_function_table_definition.h>
@@ -93,7 +92,7 @@ void renderer_t::init_programs()
 void renderer_t::init_pipeline()
 {
     const uint32_t max_trace_depth = 1;
-    std::vector<OptixProgramGroup> groups = { _raygen_pg, _miss_pg, _hitgroup_pg };
+    std::vector <OptixProgramGroup> groups = { _raygen_pg, _miss_pg, _hitgroup_pg };
 
     OptixPipelineLinkOptions pipeline_link_options {};
     pipeline_link_options.maxTraceDepth = max_trace_depth;
@@ -120,42 +119,58 @@ void renderer_t::init_pipeline()
                                               direct_callable_stack_size_from_state, continuation_stack_size, 2));
 }
 
-static void load_texture(const cubemap_t& tex)
+static void create_raygen_record(OptixProgramGroup& pg, OptixShaderBindingTable& sbt)
 {
+    ray_gen_sbt_record_t record {};
 
+    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(pg, &record))
+
+    unsafe::device_buffer_t buffer;
+    buffer.allocate(sizeof(ray_gen_sbt_record_t));
+    buffer.load_data(&record, buffer.size);
+
+    sbt.raygenRecord = reinterpret_cast<CUdeviceptr>(buffer.data);
+}
+
+static void create_miss_record(OptixProgramGroup& pg, OptixShaderBindingTable& sbt)
+{
+    miss_sbt_record_t record {};
+    record.data.background = { 135, 206, 235, 255 };
+
+    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(pg, &record))
+
+    unsafe::device_buffer_t buffer;
+    buffer.allocate(sizeof(miss_sbt_record_t));
+    buffer.load_data(&record, buffer.size);
+
+    sbt.missRecordBase = reinterpret_cast<CUdeviceptr>(buffer.data);
+    sbt.missRecordStrideInBytes = sizeof(miss_sbt_record_t);
+    sbt.missRecordCount = 1;
+}
+
+static void create_hitgroup_record(OptixProgramGroup& pg, OptixShaderBindingTable& sbt, const scene_t* scene)
+{
+    hitgroup_sbt_record_t record {};
+    record.data.color = { 255, 119, 172, 255 };
+    record.data.vertices = reinterpret_cast<float3*>(scene->mesh.d_vertices.data);
+    record.data.indices = reinterpret_cast<uint3*>(scene->mesh.d_indices.data);
+
+    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(pg, &record));
+
+    unsafe::device_buffer_t buffer;
+    buffer.allocate(sizeof(hitgroup_sbt_record_t));
+    buffer.load_data(&record, buffer.size);
+
+    sbt.hitgroupRecordBase = reinterpret_cast<CUdeviceptr>(buffer.data);
+    sbt.hitgroupRecordStrideInBytes = sizeof(hitgroup_sbt_record_t);
+    sbt.hitgroupRecordCount = 1;
 }
 
 void renderer_t::load_sbt()
 {
-    // Raygen record
-    ray_gen_sbt_record_t rg_sbt {};
-    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_raygen_pg, &rg_sbt));
-    device_buffer_t rg_buffer { sizeof(ray_gen_sbt_record_t), &rg_sbt, true };
-    _sbt.raygenRecord = rg_buffer.data();
-
-    // Miss record
-    miss_sbt_record_t miss_sbt {};
-    miss_sbt.data.background = { 135, 206, 235, 255 };
-    // TODO: Load CUDA texture
-
-
-    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_miss_pg, &miss_sbt));
-    device_buffer_t miss_buffer { sizeof(miss_sbt_record_t), &miss_sbt, true };
-    _sbt.missRecordBase = miss_buffer.data();
-    _sbt.missRecordStrideInBytes = sizeof(miss_sbt_record_t);
-    _sbt.missRecordCount = 1;
-
-    // Hitgroup record
-    hitgroup_sbt_record_t hg_sbt {};
-    hg_sbt.data.color = color_t { 255, 119, 172, 255 };
-    hg_sbt.data.vertices = (float3*) _scene.d_vertex_ptr;
-    hg_sbt.data.indices = (uint3*) _scene.d_index_ptr;
-
-    OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_hitgroup_pg, &hg_sbt));
-    device_buffer_t hg_buffer { sizeof(hitgroup_sbt_record_t), &hg_sbt, true };
-    _sbt.hitgroupRecordBase = hg_buffer.data();
-    _sbt.hitgroupRecordStrideInBytes = sizeof(hitgroup_sbt_record_t);
-    _sbt.hitgroupRecordCount = 1;
+    create_raygen_record(_raygen_pg, _sbt);
+    create_miss_record(_miss_pg, _sbt);
+    create_hitgroup_record(_hitgroup_pg, _sbt, _scene_ptr);
 }
 
 renderer_t::renderer_t(const render_options_t& opt)
@@ -168,20 +183,15 @@ renderer_t::renderer_t(const render_options_t& opt)
     init_pipeline();
 }
 
-void renderer_t::build_accel(const scene_t& scene)
+void renderer_t::build_accel()
 {
+    // Copy data to device
+    auto d_vertex_tmp_ptr = reinterpret_cast<CUdeviceptr>(_scene_ptr->mesh.d_vertices.data);
+
     // TODO: See compaction
     OptixAccelBuildOptions accel_options {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-
-    // Copy data to device
-    std::vector<float3> vertices = scene.meshes[0].vertices;
-    std::vector<uint3> indices = scene.meshes[0].indices;
-    device_buffer_t d_vertices { sizeof(float3) * vertices.size(), (void*) vertices.data(), true };
-    device_buffer_t d_indices { sizeof(uint3) * indices.size(), (void*) indices.data(), true };
-    _scene.d_vertex_ptr = d_vertices.data();
-    _scene.d_index_ptr = d_indices.data();
 
     // Prepare triangle build input
     OptixBuildInput input {};
@@ -190,14 +200,14 @@ void renderer_t::build_accel(const scene_t& scene)
     // vertices
     input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     input.triangleArray.vertexStrideInBytes = sizeof(float3);
-    input.triangleArray.numVertices = vertices.size();
-    input.triangleArray.vertexBuffers = &_scene.d_vertex_ptr;
+    input.triangleArray.numVertices = _scene_ptr->mesh.vertices.size();
+    input.triangleArray.vertexBuffers = &d_vertex_tmp_ptr;
 
     // indices
     input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     input.triangleArray.indexStrideInBytes = sizeof(uint3);
-    input.triangleArray.numIndexTriplets = indices.size();
-    input.triangleArray.indexBuffer = _scene.d_index_ptr;
+    input.triangleArray.numIndexTriplets = _scene_ptr->mesh.indices.size();
+    input.triangleArray.indexBuffer = reinterpret_cast<CUdeviceptr>(_scene_ptr->mesh.d_indices.data);
 
     // SBT offsets
     const unsigned int flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
@@ -218,7 +228,7 @@ void renderer_t::build_accel(const scene_t& scene)
     device_buffer_t temp_buffer { buffer_sizes.tempSizeInBytes };
 
     // The output buffer should persist, we'll save the pointer in the class
-    device_buffer_t output_buffer { buffer_sizes.outputSizeInBytes, nullptr, true };
+    _gas.allocate(buffer_sizes.outputSizeInBytes);
 
     // Build the structure
     OPTIX_SAFE_CALL(optixAccelBuild(
@@ -229,23 +239,20 @@ void renderer_t::build_accel(const scene_t& scene)
             1,                  // num build inputs
             temp_buffer.data(),
             buffer_sizes.tempSizeInBytes,
-            output_buffer.data(),
+            reinterpret_cast<CUdeviceptr>(_gas.data),
             buffer_sizes.outputSizeInBytes,
-            &_scene_handle,
+            &_traversable_handle,
             nullptr,            // emitted property list
             0                   // num emitted properties
     ));
-
-    // Save the accel pointer
-    _accel_ptr = output_buffer.data();
 
     // Non-persistent buffers will be cleaned
 }
 
 void renderer_t::load_scene(const scene_t& scene)
 {
-    _scene.host_ptr = &scene;
-    build_accel(scene);
+    _scene_ptr = const_cast<scene_t*>(&scene);
+    build_accel();
     load_sbt();
 }
 
@@ -259,8 +266,8 @@ void renderer_t::render(const device_buffer_t& buffer)
     params.image = (color_t*) buffer.data();
     params.image_width = _options.width;
     params.image_height = _options.height;
-    params.handle = _scene_handle;
-    _scene.host_ptr->camera.set_params(params);
+    params.handle = _traversable_handle;
+    _scene_ptr->camera.set_params(params);
 
     // Copy parameters to device
     device_buffer_t d_params { sizeof(params_t), &params };
@@ -272,14 +279,11 @@ void renderer_t::render(const device_buffer_t& buffer)
 
 void renderer_t::cleanup()
 {
-    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_scene.d_vertex_ptr)));
-    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_scene.d_index_ptr)));
-
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.raygenRecord)));
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.missRecordBase)));
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.hitgroupRecordBase)));
 
-    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_accel_ptr)));
+    _gas.free();
 
     OPTIX_SAFE_CALL(optixPipelineDestroy(_pipeline));
     OPTIX_SAFE_CALL(optixProgramGroupDestroy(_hitgroup_pg));
