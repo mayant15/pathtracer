@@ -2,7 +2,10 @@
 
 #include "custom_math.h"
 #include "shader_types.h"
+
 #include <tiny_obj_loader.h>
+#include <tinyexr.h>
+
 #include <vector>
 #include <string>
 
@@ -78,12 +81,39 @@ struct mesh_t
     }
 };
 
+struct cubemap_t
+{
+    float* data = nullptr;
+    int width = 0;
+    int height = 0;
+
+    explicit cubemap_t(const std::string& path)
+    {
+        const char* error;
+        if (LoadEXR(&data, &width, &height, path.c_str(), &error) != TINYEXR_SUCCESS)
+        {
+            if (error)
+            {
+                LOG_ERROR("ERROR: Cannot load EXR at path %s\n%s", path.c_str(), error);
+                FreeEXRErrorMessage(error);
+            }
+        }
+    }
+
+    ~cubemap_t()
+    {
+        free(data);
+    }
+};
+
 struct scene_t
 {
     std::vector<mesh_t> meshes;
+    cubemap_t sky;
     camera_t camera;
 
     explicit scene_t(const std::string& path)
+            : sky("../../assets/sky.exr")
     {
         meshes.emplace_back("../../assets/suzanne.obj");
     }

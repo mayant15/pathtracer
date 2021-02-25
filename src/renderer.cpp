@@ -120,7 +120,12 @@ void renderer_t::init_pipeline()
                                               direct_callable_stack_size_from_state, continuation_stack_size, 2));
 }
 
-void renderer_t::init_sbt()
+static void load_texture(const cubemap_t& tex)
+{
+
+}
+
+void renderer_t::load_sbt()
 {
     // Raygen record
     ray_gen_sbt_record_t rg_sbt {};
@@ -131,6 +136,9 @@ void renderer_t::init_sbt()
     // Miss record
     miss_sbt_record_t miss_sbt {};
     miss_sbt.data.background = { 135, 206, 235, 255 };
+    // TODO: Load CUDA texture
+
+
     OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_miss_pg, &miss_sbt));
     device_buffer_t miss_buffer { sizeof(miss_sbt_record_t), &miss_sbt, true };
     _sbt.missRecordBase = miss_buffer.data();
@@ -140,8 +148,8 @@ void renderer_t::init_sbt()
     // Hitgroup record
     hitgroup_sbt_record_t hg_sbt {};
     hg_sbt.data.color = color_t { 255, 119, 172, 255 };
-    hg_sbt.data.vertices = (float3*) _d_vertex_ptr;
-    hg_sbt.data.indices = (uint3*) _d_index_ptr;
+    hg_sbt.data.vertices = (float3*) _scene.d_vertex_ptr;
+    hg_sbt.data.indices = (uint3*) _scene.d_index_ptr;
 
     OPTIX_SAFE_CALL(optixSbtRecordPackHeader(_hitgroup_pg, &hg_sbt));
     device_buffer_t hg_buffer { sizeof(hitgroup_sbt_record_t), &hg_sbt, true };
@@ -160,10 +168,8 @@ renderer_t::renderer_t(const render_options_t& opt)
     init_pipeline();
 }
 
-void renderer_t::load_scene(const scene_t& scene)
+void renderer_t::build_accel(const scene_t& scene)
 {
-    _camera = scene.camera;
-
     // TODO: See compaction
     OptixAccelBuildOptions accel_options {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
@@ -174,8 +180,8 @@ void renderer_t::load_scene(const scene_t& scene)
     std::vector<uint3> indices = scene.meshes[0].indices;
     device_buffer_t d_vertices { sizeof(float3) * vertices.size(), (void*) vertices.data(), true };
     device_buffer_t d_indices { sizeof(uint3) * indices.size(), (void*) indices.data(), true };
-    _d_vertex_ptr = d_vertices.data();
-    _d_index_ptr = d_indices.data();
+    _scene.d_vertex_ptr = d_vertices.data();
+    _scene.d_index_ptr = d_indices.data();
 
     // Prepare triangle build input
     OptixBuildInput input {};
@@ -185,13 +191,13 @@ void renderer_t::load_scene(const scene_t& scene)
     input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     input.triangleArray.vertexStrideInBytes = sizeof(float3);
     input.triangleArray.numVertices = vertices.size();
-    input.triangleArray.vertexBuffers = &_d_vertex_ptr;
+    input.triangleArray.vertexBuffers = &_scene.d_vertex_ptr;
 
     // indices
     input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     input.triangleArray.indexStrideInBytes = sizeof(uint3);
     input.triangleArray.numIndexTriplets = indices.size();
-    input.triangleArray.indexBuffer = _d_index_ptr;
+    input.triangleArray.indexBuffer = _scene.d_index_ptr;
 
     // SBT offsets
     const unsigned int flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
@@ -234,8 +240,13 @@ void renderer_t::load_scene(const scene_t& scene)
     _accel_ptr = output_buffer.data();
 
     // Non-persistent buffers will be cleaned
-    // TODO: should this be here?
-    init_sbt();
+}
+
+void renderer_t::load_scene(const scene_t& scene)
+{
+    _scene.host_ptr = &scene;
+    build_accel(scene);
+    load_sbt();
 }
 
 void renderer_t::render(const device_buffer_t& buffer)
@@ -249,7 +260,7 @@ void renderer_t::render(const device_buffer_t& buffer)
     params.image_width = _options.width;
     params.image_height = _options.height;
     params.handle = _scene_handle;
-    _camera.set_params(params);
+    _scene.host_ptr->camera.set_params(params);
 
     // Copy parameters to device
     device_buffer_t d_params { sizeof(params_t), &params };
@@ -261,8 +272,8 @@ void renderer_t::render(const device_buffer_t& buffer)
 
 void renderer_t::cleanup()
 {
-    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_d_vertex_ptr)));
-    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_d_index_ptr)));
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_scene.d_vertex_ptr)));
+    CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_scene.d_index_ptr)));
 
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.raygenRecord)));
     CUDA_SAFE_CALL(cudaFree(reinterpret_cast<void*>(_sbt.missRecordBase)));

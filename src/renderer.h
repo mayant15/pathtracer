@@ -28,9 +28,14 @@ class renderer_t
     // Scene
     OptixTraversableHandle _scene_handle {};
     CUdeviceptr _accel_ptr {};
-    CUdeviceptr _d_vertex_ptr {};
-    CUdeviceptr _d_index_ptr {};
-    camera_t _camera {};
+
+    struct
+    {
+        const scene_t* host_ptr = nullptr;
+        CUdeviceptr d_vertex_ptr {};
+        CUdeviceptr d_index_ptr {};
+        CUdeviceptr d_texture_ptr {};
+    } _scene;
 
     // Config
     render_options_t _options;
@@ -48,5 +53,6 @@ private:
     void init_module();
     void init_programs();
     void init_pipeline();
-    void init_sbt();
+    void build_accel(const scene_t& scene);
+    void load_sbt();
 };
