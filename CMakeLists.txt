@@ -38,6 +38,7 @@ set(PATHTRACER_SOURCES
     src/renderer.cpp
 )
 
+# Main OptiX renderer
 add_executable(pathtracer ${PATHTRACER_SOURCES})
 add_dependencies(pathtracer shaders)
 target_include_directories(pathtracer PRIVATE ${PATHTRACER_INCLUDE_DIRS})
@@ -50,3 +51,6 @@ add_custom_command(TARGET pathtracer
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_OBJECTS:shaders> ${PTX_PATH}
     COMMENT "Copying shaders..."
 )
+
+# Reference implementation of smallpt
+add_subdirectory(smallpt)
