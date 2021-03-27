@@ -53,4 +53,4 @@ add_custom_command(TARGET pathtracer
 )
 
 # Reference implementation of smallpt
-add_subdirectory(smallpt)
+add_subdirectory(reference)
